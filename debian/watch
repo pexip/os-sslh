@@ -1,0 +1,4 @@
+version=3
+opts=uversionmangle=s/_/./g;s/^(\S*\.cyg-(?:i686|x86.64)-libconfig)$/0.0.$1/ \
+http://www.rutschle.net/tech/sslh.shtml \
+(?:|.*/)sslh(?:[_\-]v?|)(\d\S*)\.(?:tar\.xz|txz|tar\.bz2|tbz2|tar\.gz|tgz)

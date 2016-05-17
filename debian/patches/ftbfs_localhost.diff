@@ -1,0 +1,17 @@
+From: Guillaume Delacour <gui@iroqwa.org>
+Subject: Fix FTBFS if ip6-localhost don't resolv to ::1
+Last-Update: 2012-08-26
+
+--- a/t
++++ b/t
+@@ -8,8 +8,8 @@
+ 
+ # We use ports 9000, 9001 and 9002 -- hope that won't clash
+ # with anything...
+-my $ssh_address = "ip6-localhost:9000";
+-my $ssl_address = "ip6-localhost:9001";
++my $ssh_address = "::1:9000";
++my $ssl_address = "::1:9001";
+ my $sslh_port = 9002;
+ my $no_listen = 9003;  # Port on which no-one listens
+ my $pidfile = "/tmp/sslh_test.pid";
