@@ -37,15 +37,23 @@
 
 #define CHECK_RES_DIE(res, str) \
     if (res == -1) {    \
+       fprintf(stderr, "%s:%d:", __FILE__, __LINE__); \
        perror(str);     \
        exit(1);         \
     }
 
 #define CHECK_RES_RETURN(res, str) \
     if (res == -1) {                                    \
-        log_message(LOG_CRIT, "%s:%d:%s\n", str, errno, strerror(errno));  \
+        log_message(LOG_CRIT, "%s:%d:%s:%d:%s\n", __FILE__, __LINE__, str, errno, strerror(errno));  \
         return res;                                     \
     } 
+
+#define CHECK_ALLOC(a, str) \
+    if (!a) { \
+        fprintf(stderr, "%s:%d:", __FILE__, __LINE__); \
+        perror(str); \
+        exit(1); \
+    }
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 
@@ -102,7 +110,7 @@ void log_connection(struct connection *cnx);
 int check_access_rights(int in_socket, const char* service);
 void setup_signals(void);
 void setup_syslog(const char* bin_name);
-void drop_privileges(const char* user_name);
+void drop_privileges(const char* user_name, const char* chroot_path);
 void write_pid_file(const char* pidfile);
 void log_message(int type, char* msg, ...);
 void dump_connection(struct connection *cnx);
@@ -118,7 +126,7 @@ extern int probing_timeout, verbose, inetd, foreground,
 extern struct sockaddr_storage addr_ssl, addr_ssh, addr_openvpn;
 extern struct addrinfo *addr_listen;
 extern const char* USAGE_STRING;
-extern const char* user_name, *pid_file;
+extern const char* user_name, *pid_file, *chroot_path, *facility;
 extern const char* server_type;
 
 /* sslh-fork.c */

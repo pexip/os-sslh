@@ -1,4 +1,5 @@
+log_message_const
+fix_sslh_compiler_warnings
 fixed_version.diff
-disable_valgrind_launch.diff
-ftbfs_localhost.diff
-transparent_mode_local.diff
+fix-ftbfs-static-port.patch
+t_no_libconfig

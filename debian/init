@@ -24,6 +24,7 @@ DAEMON=/usr/sbin/$NAME
 DAEMON_OPTS=""
 PIDFILE=/var/run/sslh/$NAME.pid
 SCRIPTNAME=/etc/init.d/$NAME
+RUN=yes
 
 # Read configuration variable file if it is present
 [ -r /etc/default/$NAME ] && . /etc/default/$NAME
@@ -48,16 +49,16 @@ do_start()
 	#   0 if daemon has been started
 	#   1 if daemon was already running
 	#   2 if daemon could not be started
-
-	# Use this if you want the user to explicitly set 'RUN' in
-	# /etc/default/
-	if [ "$RUN" != "yes" ]
-	then
-		echo "$NAME disabled, please adjust the configuration to your needs "
-		log_failure_msg "and then set RUN to 'yes' in /etc/default/$NAME to enable it."
-		return 2
-	fi
-
+    
+    # Use this if you want the user to explicitly set 'RUN' in
+    # /etc/default/
+    if [ "$RUN" != "yes" ]
+    then
+        echo "$NAME disabled, please adjust the configuration to your needs "
+        log_failure_msg "and then set RUN to 'yes' in /etc/default/$NAME to enable it."
+        return 2
+    fi
+    
 	# sslh write the pid as sslh user
 	if [ ! -d /var/run/sslh/ ]
 	then

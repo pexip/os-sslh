@@ -40,21 +40,22 @@ static int is_xmpp_protocol(const char *p, int len, struct proto*);
 static int is_http_protocol(const char *p, int len, struct proto*);
 static int is_tls_protocol(const char *p, int len, struct proto*);
 static int is_adb_protocol(const char *p, int len, struct proto*);
+static int is_socks5_protocol(const char *p, int len, struct proto*);
 static int is_true(const char *p, int len, struct proto* proto) { return 1; }
 
 /* Table of protocols that have a built-in probe
  */
 static struct proto builtins[] = {
-    /* description   service  saddr  log_level  keepalive  probe  */
-    { "ssh",         "sshd",   NULL,  1,        0,         is_ssh_protocol},
-    { "openvpn",     NULL,     NULL,  1,        0,         is_openvpn_protocol },
-    { "tinc",        NULL,     NULL,  1,        0,         is_tinc_protocol },
-    { "xmpp",        NULL,     NULL,  1,        0,         is_xmpp_protocol },
-    { "http",        NULL,     NULL,  1,        0,         is_http_protocol },
-    { "ssl",         NULL,     NULL,  1,        0,         is_tls_protocol },
-    { "tls",         NULL,     NULL,  1,        0,         is_tls_protocol },
-    { "adb",         NULL,     NULL,  1,        0,         is_adb_protocol },
-    { "anyprot",     NULL,     NULL,  1,        0,         is_true }
+    /* description   service  saddr  log_level  keepalive  fork  probe  */
+    { "ssh",         "sshd",   NULL,  1,        0,         1,    is_ssh_protocol},
+    { "openvpn",     NULL,     NULL,  1,        0,         1,    is_openvpn_protocol },
+    { "tinc",        NULL,     NULL,  1,        0,         1,    is_tinc_protocol },
+    { "xmpp",        NULL,     NULL,  1,        0,         0,    is_xmpp_protocol },
+    { "http",        NULL,     NULL,  1,        0,         0,    is_http_protocol },
+    { "tls",         NULL,     NULL,  1,        0,         0,    is_tls_protocol },
+    { "adb",         NULL,     NULL,  1,        0,         0,    is_adb_protocol },
+    { "socks5",      NULL,     NULL,  1,        0,         0,    is_socks5_protocol },
+    { "anyprot",     NULL,     NULL,  1,        0,         0,    is_true }
 };
 
 static struct proto *protocols;
@@ -107,25 +108,25 @@ void hexdump(const char *mem, unsigned int len)
     {
         /* print offset */
         if(i % HEXDUMP_COLS == 0)
-            printf("0x%06x: ", i);
+            fprintf(stderr, "0x%06x: ", i);
 
         /* print hex data */
         if(i < len)
-            printf("%02x ", 0xFF & mem[i]);
+            fprintf(stderr, "%02x ", 0xFF & mem[i]);
         else /* end of block, just aligning for ASCII dump */
-            printf("   ");
+            fprintf(stderr, "   ");
 
         /* print ASCII dump */
         if(i % HEXDUMP_COLS == (HEXDUMP_COLS - 1)) {
             for(j = i - (HEXDUMP_COLS - 1); j <= i; j++) {
                 if(j >= len) /* end of block, not really printing */
-                    putchar(' ');
+                    fputc(' ', stderr);
                 else if(isprint(mem[j])) /* printable char */
-                    putchar(0xFF & mem[j]);        
+                    fputc(0xFF & mem[j], stderr);
                 else /* other char */
-                    putchar('.');
+                    fputc('.', stderr);
             }
-            putchar('\n');
+            fputc('\n', stderr);
         }
     }
 }
@@ -178,13 +179,16 @@ static int is_tinc_protocol( const char *p, int len, struct proto *proto)
  * */
 static int is_xmpp_protocol( const char *p, int len, struct proto *proto)
 {
+    if (memmem(p, len, "jabber", 6))
+        return PROBE_MATCH;
+
     /* sometimes the word 'jabber' shows up late in the initial string,
        sometimes after a newline. this makes sure we snarf the entire preamble
        and detect it. (fixed for adium/pidgin) */
     if (len < 50)
         return PROBE_AGAIN;
 
-    return memmem(p, len, "jabber", 6) ? 1 : 0;
+    return PROBE_NEXT;
 }
 
 static int probe_http_method(const char *p, int len, const char *opt)
@@ -192,7 +196,7 @@ static int probe_http_method(const char *p, int len, const char *opt)
     if (len < strlen(opt))
         return PROBE_AGAIN;
 
-    return !strncmp(p, opt, len);
+    return !strncmp(p, opt, strlen(opt));
 }
 
 /* Is the buffer the beginning of an HTTP connection?  */
@@ -221,45 +225,97 @@ static int is_http_protocol(const char *p, int len, struct proto *proto)
     return PROBE_NEXT;
 }
 
-static int is_sni_alpn_protocol(const char *p, int len, struct proto *proto)
-{
-    int valid_tls;
-
-    valid_tls = parse_tls_header(proto->data, p, len);
-
-    if(valid_tls < 0)
-        return -1 == valid_tls ? PROBE_AGAIN : PROBE_NEXT;
-
-    /* There *was* a valid match */
-    return PROBE_MATCH;
-}
-
+/* Says if it's TLS, optionally with SNI and ALPN lists in proto->data */
 static int is_tls_protocol(const char *p, int len, struct proto *proto)
 {
-    if (len < 3)
-        return PROBE_AGAIN;
-
-    /* TLS packet starts with a record "Hello" (0x16), followed by version
-     * (0x03 0x00-0x03) (RFC6101 A.1)
-     * This means we reject SSLv2 and lower, which is actually a good thing (RFC6176)
-     */
-    return p[0] == 0x16 && p[1] == 0x03 && ( p[2] >= 0 && p[2] <= 0x03);
+    switch (parse_tls_header(proto->data, p, len)) {
+    case TLS_MATCH: return PROBE_MATCH;
+    case TLS_NOMATCH: return PROBE_NEXT;
+    case TLS_ELENGTH: return PROBE_AGAIN;
+    default: return PROBE_NEXT;
+    }
 }
 
-static int is_adb_protocol(const char *p, int len, struct proto *proto)
+static int probe_adb_cnxn_message(const char *p)
 {
-    if (len < 30)
-        return PROBE_AGAIN;
-
     /* The initial ADB host->device packet has a command type of CNXN, and a
      * data payload starting with "host:".  Note that current versions of the
      * client hardcode "host::" (with empty serialno and banner fields) but
      * other clients may populate those fields.
-     *
-     * We aren't checking amessage.data_length, under the assumption that
-     * a packet >= 30 bytes long will have "something" in the payload field.
      */
     return !memcmp(&p[0], "CNXN", 4) && !memcmp(&p[24], "host:", 5);
+}
+
+static int is_adb_protocol(const char *p, int len, struct proto *proto)
+{
+    /* amessage.data_length is not being checked, under the assumption that
+     * a packet >= 30 bytes will have "something" in the payload field.
+     *
+     * 24 bytes for the message header and 5 bytes for the "host:" tag.
+     *
+     * ADB protocol:
+     * https://android.googlesource.com/platform/system/adb/+/master/protocol.txt
+     */
+    static const unsigned int min_data_packet_size = 30;
+
+    if (len < min_data_packet_size)
+        return PROBE_AGAIN;
+
+    if (probe_adb_cnxn_message(&p[0]) == PROBE_MATCH)
+        return PROBE_MATCH;
+
+    /* In ADB v26.0.0 rc1-4321094, the initial host->device packet sends an
+     * empty message before sending the CNXN command type. This was an
+     * unintended side effect introduced in
+     * https://android-review.googlesource.com/c/342653, and will be reverted for
+     * a future release.
+     */
+    static const unsigned char empty_message[] = {
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff
+    };
+
+    if (len < min_data_packet_size + sizeof(empty_message))
+        return PROBE_AGAIN;
+
+    if (memcmp(&p[0], empty_message, sizeof(empty_message)))
+        return PROBE_NEXT;
+
+    return probe_adb_cnxn_message(&p[sizeof(empty_message)]);
+}
+
+static int is_socks5_protocol(const char *p_in, int len, struct proto *proto)
+{
+    unsigned char* p = (unsigned char*)p_in;
+    int i;
+
+    if (len < 2)
+        return PROBE_AGAIN;
+
+    /* First byte should be socks protocol version */
+    if (p[0] != 5)
+        return PROBE_NEXT;
+
+    /* Second byte should be number of supported 
+     * authentication methods, assuming maximum of 10,
+     * as defined in https://www.iana.org/assignments/socks-methods/socks-methods.xhtml
+     */
+    char m_count = p[1];
+    if (m_count < 1 || m_count > 10)
+        return PROBE_NEXT;
+
+    if (len < 2 + m_count)
+        return PROBE_AGAIN;
+
+    /* Each authentication method number should be in range 0..9 
+     * (https://www.iana.org/assignments/socks-methods/socks-methods.xhtml)
+     */
+    for (i = 0; i < m_count; i++) {
+        if (p[2 + i] > 9)
+            return PROBE_NEXT;
+    }
+    return PROBE_MATCH;
 }
 
 static int regex_probe(const char *p, int len, struct proto *proto)
@@ -288,8 +344,8 @@ static int regex_probe(const char *p, int len, struct proto *proto)
 int probe_client_protocol(struct connection *cnx)
 {
     char buffer[BUFSIZ];
-    struct proto *p;
-    int n;
+    struct proto *p, *last_p = cnx->proto;
+    int n, res, again = 0;
 
     n = read(cnx->q[0].fd, buffer, sizeof(buffer));
     /* It's possible that read() returns an error, e.g. if the client
@@ -297,30 +353,41 @@ int probe_client_protocol(struct connection *cnx)
      * happens, we just connect to the default protocol so the caller of this
      * function does not have to deal with a specific  failure condition (the
      * connection will just fail later normally). */
+
     if (n > 0) {
-        int res = PROBE_NEXT;
-
-        defer_write(&cnx->q[1], buffer, n);
-
-        for (p = cnx->proto; p && res == PROBE_NEXT; p = p->next) {
-            if (! p->probe) continue;
-            if (verbose) fprintf(stderr, "probing for %s\n", p->description);
-
-            cnx->proto = p;
-            res = p->probe(cnx->q[1].begin_deferred_data, cnx->q[1].deferred_data_size, p);
+        if (verbose > 1) {
+            fprintf(stderr, "hexdump of incoming packet:\n");
+            hexdump(buffer, n);
         }
-        if (res != PROBE_NEXT)
-            return res;
+        defer_write(&cnx->q[1], buffer, n);
     }
 
-    if (verbose) 
-        fprintf(stderr, 
-                "all probes failed, connecting to first protocol: %s\n", 
-                protocols->description);
+    for (p = cnx->proto; p; p = p->next) {
+        char* probe_str[3] = {"PROBE_NEXT", "PROBE_MATCH", "PROBE_AGAIN"};
+        if (! p->probe) continue;
 
-    /* If none worked, return the first one affected (that's completely
-     * arbitrary) */
-    cnx->proto = protocols;
+        /* Don't probe last protocol if it is anyprot (and store last protocol) */
+        if (! p->next) {
+            last_p = p;
+            if (!strcmp(p->description, "anyprot"))
+                break;
+        }
+
+        res = p->probe(cnx->q[1].begin_deferred_data, cnx->q[1].deferred_data_size, p);
+        if (verbose) fprintf(stderr, "probing for %s: %s\n", p->description, probe_str[res]);
+
+        if (res == PROBE_MATCH) {
+            cnx->proto = p;
+            return PROBE_MATCH;
+        }
+        if (res == PROBE_AGAIN)
+            again++;
+    }
+    if ((again && (n > 0)) || ((n == -1) && (errno == EAGAIN)))
+        return PROBE_AGAIN;
+
+    /* Everything failed: match the last one */
+    cnx->proto = last_p;
     return PROBE_MATCH;
 }
 
@@ -351,10 +418,6 @@ T_PROBE* get_probe(const char* description) {
      * regexp is not legal on the command line)*/
     if (!strcmp(description, "regex"))
         return regex_probe;
-
-    /* Special case of "sni/alpn" probe for same reason as above*/
-    if (!strcmp(description, "sni_alpn"))
-        return is_sni_alpn_protocol;
 
     /* Special case of "timeout" is allowed as a probe name in the
      * configuration file even though it's not really a probe */

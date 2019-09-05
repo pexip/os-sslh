@@ -39,8 +39,8 @@
 const char* USAGE_STRING =
 "sslh " VERSION "\n" \
 "usage:\n" \
-"\tsslh  [-v] [-i] [-V] [-f] [-n] [--transparent] [-F <file>]\n"
-"\t[-t <timeout>] [-P <pidfile>] -u <username> -p <add> [-p <addr> ...] \n" \
+"\tsslh  [-v] [-i] [-V] [-f] [-n] [--transparent] [-F<file>]\n"
+"\t[-t <timeout>] [-P <pidfile>] [-u <username>] [-C <chroot>] -p <addr> [-p <addr> ...] \n" \
 "%s\n\n" /* Dynamically built list of builtin protocols */  \
 "\t[--on-timeout <addr>]\n" \
 "-v: verbose\n" \
@@ -48,8 +48,9 @@ const char* USAGE_STRING =
 "-f: foreground\n" \
 "-n: numeric output\n" \
 "-u: specify under which user to run\n" \
+"-C: specify under which chroot path to run\n" \
 "--transparent: behave as a transparent proxy\n" \
-"-F: use configuration file\n" \
+"-F: use configuration file (warning: no space between -F and file name!)\n" \
 "--on-timeout: connect to specified address upon timeout (default: ssh address)\n" \
 "-t: seconds to wait before connecting to --on-timeout address.\n" \
 "-p: address and port to listen on.\n    Can be used several times to bind to several addresses.\n" \
@@ -71,6 +72,7 @@ static struct option const_options[] = {
     { "user",       required_argument,      0,              'u' },
     { "config",     optional_argument,      0,              'F' },
     { "pidfile",    required_argument,      0,              'P' },
+    { "chroot",     required_argument,      0,              'C' },
     { "timeout",    required_argument,      0,              't' },
     { "on-timeout", required_argument,      0,              OPT_ONTIMEOUT },
     { "listen",     required_argument,      0,              'p' },
@@ -78,7 +80,7 @@ static struct option const_options[] = {
 };
 static struct option* all_options;
 static struct proto* builtins;
-static const char *optstr = "vt:T:p:VP:F::";
+static const char *optstr = "vt:T:p:VP:C:F::";
 
 
 
@@ -123,14 +125,15 @@ static void printsettings(void)
     
     for (p = get_first_protocol(); p; p = p->next) {
         fprintf(stderr,
-                "%s addr: %s. libwrap service: %s log_level: %d family %d %d [%s]\n", 
+                "%s addr: %s. libwrap service: %s log_level: %d family %d %d [%s] [%s]\n",
                 p->description, 
                 sprintaddr(buf, sizeof(buf), p->saddr), 
                 p->service,
                 p->log_level,
                 p->saddr->ai_family,
                 p->saddr->ai_addr->sa_family,
-                p->keepalive ? "keepalive" : "");
+                p->keepalive ? "keepalive" : "",
+                p->fork ? "fork" : "");
     }
     fprintf(stderr, "listening on:\n");
     for (a = addr_listen; a; a = a->ai_next) {
@@ -141,6 +144,32 @@ static void printsettings(void)
     }
     fprintf(stderr, "timeout: %d\non-timeout: %s\n", probing_timeout,
             timeout_protocol()->description);
+}
+
+
+/* To removed in v1.21 */
+const char* ssl_err_msg = "Usage of 'ssl' setting is deprecated and will be removed in v1.21. Please use 'tls' instead\n";
+void ssl_to_tls(char* setting)
+{
+    if (!strcmp(setting, "ssl")) {
+        strcpy(setting, "tls"); /* legacy configuration */
+        log_message(LOG_INFO, ssl_err_msg);
+    }
+}
+
+
+/* Turn 'ssl' command line option to 'tls'. To removed in v1.21 */
+void cmd_ssl_to_tls(int argc, char* argv[])
+{
+    int i;
+    for (i = 0; i < argc; i++) {
+        if (!strcmp(argv[i], "--ssl")) {
+            strcpy(argv[i], "--tls");
+            /* foreground option not parsed yet, syslog not open, just print on
+             * stderr and hope for the best */
+            fprintf(stderr, ssl_err_msg);
+        }
+    }
 }
 
 
@@ -207,14 +236,21 @@ static void setup_regex_probe(struct proto *p, config_setting_t* probes)
 
     p->probe = get_probe("regex");
     probe_list = calloc(num_probes + 1, sizeof(*probe_list));
+    CHECK_ALLOC(probe_list, "calloc");
     p->data = (void*)probe_list;
 
     for (i = 0; i < num_probes; i++) {
         probe_list[i] = malloc(sizeof(*(probe_list[i])));
+        CHECK_ALLOC(probe_list[i], "malloc");
         expr = config_setting_get_string_elem(probes, i);
-        res = regcomp(probe_list[i], expr, 0);
+        if (expr == NULL) {
+            fprintf(stderr, "%s: invalid probe specified\n", p->description);
+            exit(1);
+        }
+        res = regcomp(probe_list[i], expr, REG_EXTENDED);
         if (res) {
             err = malloc(errsize = regerror(res, probe_list[i], NULL, 0));
+            CHECK_ALLOC(err, "malloc");
             regerror(res, probe_list[i], err, errsize);
             fprintf(stderr, "%s:%s\n", expr, err);
             free(err);
@@ -232,13 +268,9 @@ static void setup_regex_probe(struct proto *p, config_setting_t* probes)
 static void setup_sni_alpn_list(struct proto *p, config_setting_t* config_items, const char* name, int alpn)
 {
     int num_probes, i, max_server_name_len, server_name_len;
-    const char * config_item;
+    const char * config_item, *server_name;
     char** sni_hostname_list;
 
-    if(!config_items || !config_setting_is_array(config_items)) {
-        fprintf(stderr, "%s: no %s specified\n", p->description, name);
-        return;
-    }
     num_probes = config_setting_length(config_items);
     if (!num_probes) {
         fprintf(stderr, "%s: no %s specified\n", p->description, name);
@@ -247,16 +279,27 @@ static void setup_sni_alpn_list(struct proto *p, config_setting_t* config_items,
 
     max_server_name_len = 0;
     for (i = 0; i < num_probes; i++) {
-        server_name_len = strlen(config_setting_get_string_elem(config_items, i));
+        server_name = config_setting_get_string_elem(config_items, i);
+        if (server_name == NULL) {
+            fprintf(stderr, "%s: invalid %s specified\n", p->description, name);
+            exit(1);
+        }
+        server_name_len = strlen(server_name);
         if(server_name_len > max_server_name_len)
             max_server_name_len = server_name_len;
     }
 
     sni_hostname_list = calloc(num_probes + 1, ++max_server_name_len);
+    CHECK_ALLOC(sni_hostname_list, "calloc");
 
     for (i = 0; i < num_probes; i++) {
         config_item = config_setting_get_string_elem(config_items, i);
+        if (config_item == NULL) {
+            fprintf(stderr, "%s: invalid %s specified\n", p->description, name);
+            exit(1);
+        }
         sni_hostname_list[i] = malloc(max_server_name_len);
+        CHECK_ALLOC(sni_hostname_list[i], "malloc");
         strcpy (sni_hostname_list[i], config_item);
         if(verbose) fprintf(stderr, "%s: %s[%d]: %s\n", p->description, name, i, sni_hostname_list[i]);
     }
@@ -264,12 +307,20 @@ static void setup_sni_alpn_list(struct proto *p, config_setting_t* config_items,
     p->data = (void*)tls_data_set_list(p->data, alpn, sni_hostname_list);
 }
 
-static void setup_sni_alpn(struct proto *p, config_setting_t* sni_hostnames, config_setting_t* alpn_protocols)
+static void setup_sni_alpn(struct proto *p, config_setting_t* prot)
 {
+    config_setting_t *sni_hostnames, *alpn_protocols;
+
     p->data = (void*)new_tls_data();
-    p->probe = get_probe("sni_alpn");
-    setup_sni_alpn_list(p, sni_hostnames, "sni_hostnames", 0);
-    setup_sni_alpn_list(p, alpn_protocols, "alpn_protocols", 1);
+    sni_hostnames = config_setting_get_member(prot, "sni_hostnames");
+    alpn_protocols = config_setting_get_member(prot, "alpn_protocols");
+
+    if(sni_hostnames && config_setting_is_array(sni_hostnames)) {
+        setup_sni_alpn_list(p, sni_hostnames, "sni_hostnames", 0);
+    }
+    if(alpn_protocols && config_setting_is_array(alpn_protocols)) {
+        setup_sni_alpn_list(p, alpn_protocols, "alpn_protocols", 1);
+    }
 }
 #endif
 
@@ -279,8 +330,9 @@ static void setup_sni_alpn(struct proto *p, config_setting_t* sni_hostnames, con
 #ifdef LIBCONFIG
 static int config_protocols(config_t *config, struct proto **prots)
 {
-    config_setting_t *setting, *prot, *patterns, *sni_hostnames, *alpn_protocols;
-    const char *hostname, *port, *name;
+    config_setting_t *setting, *prot, *patterns;
+    const char *hostname, *port, *cfg_name;
+    char* name;
     int i, num_prots;
     struct proto *p, *prev = NULL;
 
@@ -289,27 +341,36 @@ static int config_protocols(config_t *config, struct proto **prots)
         num_prots = config_setting_length(setting);
         for (i = 0; i < num_prots; i++) {
             p = calloc(1, sizeof(*p));
+            CHECK_ALLOC(p, "calloc");
             if (i == 0) *prots = p;
             if (prev) prev->next = p;
             prev = p;
 
             prot = config_setting_get_elem(setting, i);
-            if ((config_setting_lookup_string(prot, "name", &name) &&
+            if ((config_setting_lookup_string(prot, "name", &cfg_name) &&
                  config_setting_lookup_string(prot, "host", &hostname) &&
                  config_setting_lookup_string(prot, "port", &port)
                 )) {
+                /* To removed in v1.21 */
+                name = strdup(cfg_name);
+                ssl_to_tls(name);
+                /* /remove */
                 p->description = name;
                 config_setting_lookup_string(prot, "service", &(p->service));
                 config_setting_lookup_bool(prot, "keepalive", &p->keepalive);
+                config_setting_lookup_bool(prot, "fork", &p->fork);
 
                 if (config_setting_lookup_int(prot, "log_level", &p->log_level) == CONFIG_FALSE) {
                     p->log_level = 1;
                 }
 
-                resolve_split_name(&(p->saddr), hostname, port);
+                if (resolve_split_name(&(p->saddr), hostname, port)) {
+                    fprintf(stderr, "line %d: cannot resolve %s:%s\n", config_setting_source_line(prot), hostname, port);
+                    exit(1);
+                }
 
                 p->probe = get_probe(name);
-                if (!p->probe || !strcmp(name, "sni_alpn")) {
+                if (!p->probe) {
                     fprintf(stderr, "line %d: %s: probe unknown\n", config_setting_source_line(prot), name);
                     exit(1);
                 }
@@ -324,14 +385,12 @@ static int config_protocols(config_t *config, struct proto **prots)
 
                 /* Probe-specific options: SNI/ALPN */
                 if (!strcmp(name, "tls")) {
-                    sni_hostnames = config_setting_get_member(prot, "sni_hostnames");
-                    alpn_protocols = config_setting_get_member(prot, "alpn_protocols");
-
-                    if((sni_hostnames && config_setting_is_array(sni_hostnames)) || (alpn_protocols && config_setting_is_array(alpn_protocols))) {
-                        setup_sni_alpn(p, sni_hostnames, alpn_protocols);
-                    }
+                    setup_sni_alpn(p, prot);
                 }
 
+            } else {
+                fprintf(stderr, "line %d: Illegal protocol description (missing name, host or port)\n", config_setting_source_line(prot));
+                exit(1);
             }
         }
     }
@@ -371,7 +430,10 @@ static int config_parse(char *filename, struct addrinfo **listen, struct proto *
         return 1;
     }
 
-    config_lookup_bool(&config, "verbose", &verbose);
+    if(config_lookup_bool(&config, "verbose", &verbose) == CONFIG_FALSE) {
+	config_lookup_int(&config, "verbose", &verbose);
+    }
+
     config_lookup_bool(&config, "inetd", &inetd);
     config_lookup_bool(&config, "foreground", &foreground);
     config_lookup_bool(&config, "numeric", &numeric);
@@ -387,6 +449,9 @@ static int config_parse(char *filename, struct addrinfo **listen, struct proto *
 
     config_lookup_string(&config, "user", &user_name);
     config_lookup_string(&config, "pidfile", &pid_file);
+    config_lookup_string(&config, "chroot", &chroot_path);
+
+    config_lookup_string(&config, "syslog_facility", &facility);
 
     config_listen(&config, listen);
     config_protocols(&config, prots);
@@ -421,6 +486,7 @@ static void make_alloptions(void)
     /* Create all_options, composed of const_options followed by one option per
      * known protocol */
     all_options = calloc(ARRAY_SIZE(const_options) + get_num_builtins(), sizeof(struct option));
+    CHECK_ALLOC(all_options, "calloc");
     memcpy(all_options, const_options, sizeof(const_options));
     append_protocols(all_options, ARRAY_SIZE(const_options) - 1, builtins, get_num_builtins());
 }
@@ -437,6 +503,8 @@ static void cmdline_config(int argc, char* argv[], struct proto** prots)
     int c, res;
     char *config_filename;
 #endif
+
+    cmd_ssl_to_tls(argc, argv); /* To remove in v1.21 */
 
     make_alloptions();
 
@@ -499,8 +567,10 @@ next_arg:
             if (!prots) {
                 /* No protocols yet -- create the list */
                 p = prots = calloc(1, sizeof(*p));
+                CHECK_ALLOC(p, "calloc");
             } else {
                 p->next = calloc(1, sizeof(*p));
+                CHECK_ALLOC(p->next, "calloc");
                 p = p->next;
             }
             memcpy(p, &builtins[c-PROT_SHIFT], sizeof(*p));
@@ -547,6 +617,10 @@ next_arg:
             pid_file = optarg;
             break;
 
+        case 'C':
+            chroot_path = optarg;
+            break;
+
         case 'v':
             verbose++;
             break;
@@ -591,6 +665,7 @@ int main(int argc, char *argv[])
    /* Init defaults */
    pid_file = NULL;
    user_name = NULL;
+   chroot_path = NULL;
 
    cmdline_config(argc, argv, &protocols);
    parse_cmdline(argc, argv, protocols);
@@ -629,12 +704,11 @@ int main(int argc, char *argv[])
    if (pid_file)
        write_pid_file(pid_file);
 
-   if (user_name)
-       drop_privileges(user_name);
-
-
-   /* Open syslog connection */
+   /* Open syslog connection before we drop privs/chroot */
    setup_syslog(argv[0]);
+
+   if (user_name || chroot_path)
+       drop_privileges(user_name, chroot_path);
 
    if (verbose)
        printcaps();

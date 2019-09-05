@@ -4,9 +4,15 @@
  * No code here should assume whether sockets are blocking or not.
  **/
 
+#define SYSLOG_NAMES
 #define _GNU_SOURCE
+#include <stddef.h>
 #include <stdarg.h>
 #include <grp.h>
+
+#include <sys/types.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
 
 #include "common.h"
 #include "probe.h"
@@ -35,7 +41,7 @@ int foreground = 0;
 int background = 0;
 int transparent = 0;
 int numeric = 0;
-const char *user_name, *pid_file;
+const char *user_name, *pid_file, *chroot_path, *facility = "auth";
 
 struct addrinfo *addr_listen = NULL; /* what addresses do we listen to? */
 
@@ -44,8 +50,13 @@ struct addrinfo *addr_listen = NULL; /* what addresses do we listen to? */
 int allow_severity =0, deny_severity = 0;
 #endif
 
+typedef enum {
+    CR_DIE,
+    CR_WARN
+} CR_ACTION;
+
 /* check result and die, printing the offending address and error */
-void check_res_dumpdie(int res, struct addrinfo *addr, char* syscall)
+void check_res_dump(CR_ACTION act, int res, struct addrinfo *addr, char* syscall)
 {
     char buf[NI_MAXHOST];
 
@@ -54,7 +65,9 @@ void check_res_dumpdie(int res, struct addrinfo *addr, char* syscall)
                 sprintaddr(buf, sizeof(buf), addr),
                 syscall,
                 strerror(errno));
-        exit(1);
+
+        if (act == CR_DIE)
+            exit(1);
     }
 }
 
@@ -69,8 +82,10 @@ int get_fd_sockets(int *sockfd[])
       exit(1);
     }
     if (sd > 0) {
+      int i;
       *sockfd = malloc(sd * sizeof(*sockfd[0]));
-      for (int i = 0; i < sd; i++) {
+      CHECK_ALLOC(*sockfd, "malloc");
+      for (i = 0; i < sd; i++) {
         (*sockfd)[i] = SD_LISTEN_FDS_START + i;
       }
     }
@@ -102,10 +117,16 @@ int start_listen_sockets(int *sockfd[], struct addrinfo *addr_list)
    for (addr = addr_list; addr; addr = addr->ai_next)
        num_addr++;
 
+   if (num_addr == 0) {
+       fprintf(stderr, "FATAL: No available addresses.\n");
+       exit(1);
+   }
+
    if (verbose)
        fprintf(stderr, "listening to %d addresses\n", num_addr);
 
    *sockfd = malloc(num_addr * sizeof(*sockfd[0]));
+   CHECK_ALLOC(*sockfd, "malloc");
 
    for (i = 0, addr = addr_list; i < num_addr && addr; i++, addr = addr->ai_next) {
        if (!addr) {
@@ -115,33 +136,79 @@ int start_listen_sockets(int *sockfd[], struct addrinfo *addr_list)
        saddr = (struct sockaddr_storage*)addr->ai_addr;
 
        (*sockfd)[i] = socket(saddr->ss_family, SOCK_STREAM, 0);
-       check_res_dumpdie((*sockfd)[i], addr, "socket");
+       check_res_dump(CR_DIE, (*sockfd)[i], addr, "socket");
 
        one = 1;
        res = setsockopt((*sockfd)[i], SOL_SOCKET, SO_REUSEADDR, (char*)&one, sizeof(one));
-       check_res_dumpdie(res, addr, "setsockopt(SO_REUSEADDR)");
+       check_res_dump(CR_DIE, res, addr, "setsockopt(SO_REUSEADDR)");
 
        if (addr->ai_flags & SO_KEEPALIVE) {
            res = setsockopt((*sockfd)[i], SOL_SOCKET, SO_KEEPALIVE, (char*)&one, sizeof(one));
-           check_res_dumpdie(res, addr, "setsockopt(SO_KEEPALIVE)");
-           printf("set up keepalive\n");
+           check_res_dump(CR_DIE, res, addr, "setsockopt(SO_KEEPALIVE)");
        }
 
        if (IP_FREEBIND) {
            res = setsockopt((*sockfd)[i], IPPROTO_IP, IP_FREEBIND, (char*)&one, sizeof(one));
-           check_res_dumpdie(res, addr, "setsockopt(IP_FREEBIND)");
+           check_res_dump(CR_WARN, res, addr, "setsockopt(IP_FREEBIND)");
+           }
+
+       if (addr->ai_addr->sa_family == AF_INET6) {
+           res = setsockopt((*sockfd)[i], IPPROTO_IPV6, IPV6_V6ONLY, (char*)&one, sizeof(one));
+           check_res_dump(CR_WARN, res, addr, "setsockopt(IPV6_V6ONLY)");
        }
 
        res = bind((*sockfd)[i], addr->ai_addr, addr->ai_addrlen);
-       check_res_dumpdie(res, addr, "bind");
+       check_res_dump(CR_DIE, res, addr, "bind");
 
        res = listen ((*sockfd)[i], 50);
-       check_res_dumpdie(res, addr, "listen");
+       check_res_dump(CR_DIE, res, addr, "listen");
 
    }
 
    return num_addr;
 }
+
+
+/* returns 1 if given address is on the local machine: iterate through all
+ * network interfaces and check their addresses */
+int is_same_machine(struct addrinfo* from)
+{
+    struct ifaddrs *ifaddrs_p = NULL, *ifa;
+    int match = 0;
+
+    getifaddrs(&ifaddrs_p);
+
+    for (ifa = ifaddrs_p; ifa != NULL; ifa = ifa->ifa_next)
+    {
+        if (!ifa->ifa_addr)
+            continue;
+        if (from->ai_addr->sa_family == ifa->ifa_addr->sa_family)
+        {
+            int family = ifa->ifa_addr->sa_family;
+            if (family == AF_INET)
+            {
+                struct sockaddr_in *from_addr = (struct sockaddr_in*)from->ai_addr;
+                struct sockaddr_in *ifa_addr = (struct sockaddr_in*)ifa->ifa_addr;
+                if (from_addr->sin_addr.s_addr == ifa_addr->sin_addr.s_addr) {
+                    match = 1;
+                    break;
+                }
+            }
+            else if (family == AF_INET6)
+            {
+                struct sockaddr_in6 *from_addr = (struct sockaddr_in6*)from->ai_addr;
+                struct sockaddr_in6 *ifa_addr = (struct sockaddr_in6*)ifa->ifa_addr;
+                if (!memcmp(from_addr->sin6_addr.s6_addr, ifa_addr->sin6_addr.s6_addr, 16)) {
+                    match = 1;
+                    break;
+                }
+            }
+        }
+    }
+    freeifaddrs(ifaddrs_p);
+    return match;
+}
+
 
 /* Transparent proxying: bind the peer address of fd to the peer address of
  * fd_from */
@@ -160,6 +227,11 @@ int bind_peer(int fd, int fd_from)
      * got here */
     res = getpeername(fd_from, from.ai_addr, &from.ai_addrlen);
     CHECK_RES_RETURN(res, "getpeername");
+
+    /* if the destination is the same machine, there's no need to do bind */
+    if (is_same_machine(&from))
+        return 0;
+    
 #ifndef IP_BINDANY /* use IP_TRANSPARENT */
     res = setsockopt(fd, IPPROTO_IP, IP_TRANSPARENT, &trans, sizeof(trans));
     CHECK_RES_DIE(res, "setsockopt");
@@ -227,7 +299,6 @@ int connect_addr(struct connection *cnx, int fd_from)
                     one = 1;
                     res = setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, (char*)&one, sizeof(one));
                     CHECK_RES_RETURN(res, "setsockopt(SO_KEEPALIVE)");
-                    printf("set up keepalive\n");
                 }
                 return fd;
             }
@@ -240,17 +311,16 @@ int connect_addr(struct connection *cnx, int fd_from)
 int defer_write(struct queue *q, void* data, int data_size)
 {
     char *p;
+    ptrdiff_t data_offset = q->deferred_data - q->begin_deferred_data;
     if (verbose)
         fprintf(stderr, "**** writing deferred on fd %d\n", q->fd);
 
-    p = realloc(q->begin_deferred_data, q->deferred_data_size + data_size);
-    if (!p) {
-        perror("realloc");
-        exit(1);
-    }
+    p = realloc(q->begin_deferred_data, data_offset + q->deferred_data_size + data_size);
+    CHECK_ALLOC(p, "realloc");
 
-    q->deferred_data = q->begin_deferred_data = p;
-    p += q->deferred_data_size;
+    q->begin_deferred_data = p;
+    q->deferred_data = p + data_offset;
+    p += data_offset + q->deferred_data_size;
     q->deferred_data_size += data_size;
     memcpy(p, data, data_size);
 
@@ -398,19 +468,43 @@ char* sprintaddr(char* buf, size_t size, struct addrinfo *a)
 
 /* Turns a hostname and port (or service) into a list of struct addrinfo
  * returns 0 on success, -1 otherwise and logs error
- **/
-int resolve_split_name(struct addrinfo **out, const char* host, const char* serv)
+ */
+int resolve_split_name(struct addrinfo **out, const char* ct_host, const char* serv)
 {
    struct addrinfo hint;
+   char *end;
    int res;
+   char* host, *host_base;
 
    memset(&hint, 0, sizeof(hint));
    hint.ai_family = PF_UNSPEC;
    hint.ai_socktype = SOCK_STREAM;
 
+   /* Copy parameter so not to clobber data in libconfig */
+   res = asprintf(&host_base, "%s", ct_host);
+   if (res == -1) {
+       log_message(LOG_ERR, "asprintf: cannot allocate memory");
+       return -1;
+   }
+
+   host = host_base;
+
+   /* If it is a RFC-Compliant IPv6 address ("[1234::12]:443"), remove brackets
+    * around IP address */
+   if (host[0] == '[') {
+       end = strrchr(host, ']');
+       if (!end) {
+           fprintf(stderr, "%s: no closing bracket in IPv6 address?\n", host);
+           return -1;
+       }
+       host++; /* skip first bracket */
+       *end = 0; /* remove last bracket */
+   }
+
    res = getaddrinfo(host, serv, &hint, out);
    if (res)
       log_message(LOG_ERR, "%s `%s:%s'\n", gai_strerror(res), host, serv);
+   free(host_base);
    return res;
 }
 
@@ -420,7 +514,7 @@ fullname: input string -- it gets clobbered
 */
 void resolve_name(struct addrinfo **out, char* fullname)
 {
-   char *serv, *host, *end;
+   char *serv, *host;
    int res;
 
    /* Find port */
@@ -433,17 +527,6 @@ void resolve_name(struct addrinfo **out, char* fullname)
    *sep = 0;
 
    host = fullname;
-
-   /* If it is a RFC-Compliant IPv6 address ("[1234::12]:443"), remove brackets
-    * around IP address */
-   if (host[0] == '[') {
-       end = strrchr(host, ']');
-       if (!end) {
-           fprintf(stderr, "%s: no closing bracket in IPv6 address?\n", host);
-       }
-       host++; /* skip first bracket */
-       *end = 0; /* remove last bracket */
-   }
 
    res = resolve_split_name(out, host, serv);
    if (res) {
@@ -591,12 +674,21 @@ void setup_signals(void)
  * banner is made up of basename(bin_name)+"[pid]" */
 void setup_syslog(const char* bin_name) {
     char *name1, *name2;
-    int res;
+    int res, fn;
 
     name1 = strdup(bin_name);
     res = asprintf(&name2, "%s[%d]", basename(name1), getpid());
     CHECK_RES_DIE(res, "asprintf");
-    openlog(name2, LOG_CONS, LOG_AUTH);
+
+    for (fn = 0; facilitynames[fn].c_val != -1; fn++)
+        if (strcmp(facilitynames[fn].c_name, facility) == 0)
+            break;
+    if (facilitynames[fn].c_val == -1) {
+        fprintf(stderr, "Unknown facility %s\n", facility);
+        exit(1);
+    }
+
+    openlog(name2, LOG_CONS, facilitynames[fn].c_val);
     free(name1);
     /* Don't free name2, as openlog(3) uses it (at least in glibc) */
 
@@ -654,33 +746,47 @@ void set_capabilities(void) {
 }
 
 /* We don't want to run as root -- drop privileges if required */
-void drop_privileges(const char* user_name)
+void drop_privileges(const char* user_name, const char* chroot_path)
 {
     int res;
-    struct passwd *pw = getpwnam(user_name);
-    if (!pw) {
-        fprintf(stderr, "%s: not found\n", user_name);
-        exit(2);
+    struct passwd *pw = NULL;
+
+    if (user_name) {
+        pw = getpwnam(user_name);
+        if (!pw) {
+            fprintf(stderr, "%s: not found\n", user_name);
+            exit(2);
+        }
+        if (verbose)
+            fprintf(stderr, "turning into %s\n", user_name);
     }
-    if (verbose)
-        fprintf(stderr, "turning into %s\n", user_name);
 
-    set_keepcaps(1);
+    if (chroot_path) {
+        if (verbose)
+            fprintf(stderr, "chrooting into %s\n", chroot_path);
 
-    /* remove extraneous groups in case we belong to several extra groups that
-     * may have unwanted rights. If non-root when calling setgroups(), it
-     * fails, which is fine because... we have no unwanted rights
-     * (see POS36-C for security context)
-     * */
-    setgroups(0, NULL);
+        res = chroot(chroot_path);
+        CHECK_RES_DIE(res, "chroot");
+    }
 
-    res = setgid(pw->pw_gid);
-    CHECK_RES_DIE(res, "setgid");
-    res = setuid(pw->pw_uid);
-    CHECK_RES_DIE(res, "setuid");
+    if (user_name) {
+        set_keepcaps(1);
 
-    set_capabilities();
-    set_keepcaps(0);
+        /* remove extraneous groups in case we belong to several extra groups
+         * that may have unwanted rights. If non-root when calling setgroups(),
+         * it fails, which is fine because... we have no unwanted rights
+         * (see POS36-C for security context)
+         * */
+        setgroups(0, NULL);
+
+        res = setgid(pw->pw_gid);
+        CHECK_RES_DIE(res, "setgid");
+        res = setuid(pw->pw_uid);
+        CHECK_RES_DIE(res, "setuid");
+
+        set_capabilities();
+        set_keepcaps(0);
+    }
 }
 
 /* Writes my PID */

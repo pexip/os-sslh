@@ -20,7 +20,7 @@ override_dh_auto_install:
 
 # do not start daemon by default: force user to configure
 override_dh_installinit:
-	dh_installinit --no-start
+	dh_installinit --no-start --no-enable
 
 %:
-	dh $@ --with systemd
+	dh $@

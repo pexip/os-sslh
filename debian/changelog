@@ -1,3 +1,21 @@
+sslh (1.20-1) unstable; urgency=medium
+
+  [ Guillaume Delacour ]
+  * Remove debian/patches/transparent_mode_local.diff (merged upstream)
+  * Replace extra priority by optional
+  * Use debhelper 12 to avoid build depends on dh-systemd
+  * Update obsolete homepage (Closes: #889575)
+
+  [ Don Armstrong ]
+  * New upstream release (Closes: #889576)
+  * Refresh static port patch and remove localhost connection patch (for
+    testing only)
+  * Add patch which avoids requiring Conf::Libconfig, use dynamic ports
+  * Bump to Standards-Version 4.4.0; primary change is
+    --no-enable/--no-start instead of RUN
+
+ -- Don Armstrong <don@debian.org>  Thu, 05 Sep 2019 10:04:54 -0700
+
 sslh (1.18-1) unstable; urgency=medium
 
   * New upstream release, include transparent mode local patch from upstream

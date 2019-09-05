@@ -135,7 +135,7 @@ i.e. that that is not `127.0.0.1` in the output of
 Libwrap support
 ---------------
 
-Sslh can optionnaly perform `libwrap` checks for the sshd
+Sslh can optionally perform `libwrap` checks for the sshd
 service: because the connection to `sshd` will be coming
 locally from `sslh`, `sshd` cannot determine the IP of the
 client.
@@ -145,10 +145,10 @@ OpenVPN support
 
 OpenVPN clients connecting to OpenVPN running with
 `-port-share` reportedly take more than one second between
-the time the TCP connexion is established and the time they
+the time the TCP connection is established and the time they
 send the first data packet. This results in `sslh` with
-default settings timing out and assuming an SSH connexion.
-To support OpenVPN connexions reliably, it is necessary to
+default settings timing out and assuming an SSH connection.
+To support OpenVPN connections reliably, it is necessary to
 increase `sslh`'s timeout to 5 seconds.
 
 Instead of using OpenVPN's port sharing, it is more reliable
@@ -205,11 +205,11 @@ and `CAP_NET_ADMIN` for transparent proxying (see
 You can use the `setcap(8)` utility to give these capabilities
 to the executable:
 
-	# setcap cap_net_bind_service,cap_net_admin+pe sslh-select
+	sudo setcap cap_net_bind_service,cap_net_admin+pe sslh-select
 
 Then you can run sslh-select as an unpriviledged user, e.g.:
 
-	$ sslh-select -p myname:443 --ssh localhost:22 --ssl localhost:443
+	sslh-select -p myname:443 --ssh localhost:22 --ssl localhost:443
 
 Caveat: `CAP_NET_ADMIN` does give sslh too many rights, e.g.
 configuring the interface. If you're not going to use
@@ -231,35 +231,70 @@ Linux:
 give it `CAP_NET_ADMIN` capabilities (see appropriate chapter)
 or run it as root (but don't do that).
 
-The firewalling tables also need to be adjusted as follow.
-The example connects to HTTPS on 4443 -- adapt to your needs ;
-I don't think it is possible to have `httpd` listen to 443 in
+The firewalling tables also need to be adjusted as follows.
+I don't think it is possible to have `httpd` and `sslh` both listen to 443 in
 this scheme -- let me know if you manage that:
 
-	# iptables -t mangle -N SSLH
-	# iptables -t mangle -A  OUTPUT --protocol tcp --out-interface eth0 --sport 22 --jump SSLH
-	# iptables -t mangle -A OUTPUT --protocol tcp --out-interface eth0 --sport 4443 --jump SSLH
-	# iptables -t mangle -A SSLH --jump MARK --set-mark 0x1
-	# iptables -t mangle -A SSLH --jump ACCEPT
-	# ip rule add fwmark 0x1 lookup 100
-	# ip route add local 0.0.0.0/0 dev lo table 100
+	# Set route_localnet = 1 on all interfaces so that ssl can use "localhost" as destination
+	sysctl -w net.ipv4.conf.default.route_localnet=1
+	sysctl -w net.ipv4.conf.all.route_localnet=1
+
+	# DROP martian packets as they would have been if route_localnet was zero
+	# Note: packets not leaving the server aren't affected by this, thus sslh will still work
+	iptables -t raw -A PREROUTING ! -i lo -d 127.0.0.0/8 -j DROP
+	iptables -t mangle -A POSTROUTING ! -o lo -s 127.0.0.0/8 -j DROP
+
+	# Mark all connections made by ssl for special treatment (here sslh is run as user "sslh")
+	iptables -t nat -A OUTPUT -m owner --uid-owner sslh -p tcp --tcp-flags FIN,SYN,RST,ACK SYN -j CONNMARK --set-xmark 0x01/0x0f
+
+	# Outgoing packets that should go to sslh instead have to be rerouted, so mark them accordingly (copying over the connection mark)
+	iptables -t mangle -A OUTPUT ! -o lo -p tcp -m connmark --mark 0x01/0x0f -j CONNMARK --restore-mark --mask 0x0f
+
+	# Configure routing for those marked packets
+	ip rule add fwmark 0x1 lookup 100
+	ip route add local 0.0.0.0/0 dev lo table 100
 
 Tranparent proxying with IPv6 is similarly set up as follows:
 
-        # ip6tables -t mangle -N SSLH
-        # ip6tables -t mangle -A  OUTPUT --protocol tcp --out-interface eth0 --sport 22 --jump SSLH
-        # ip6tables -t mangle -A OUTPUT --protocol tcp --out-interface eth0 --sport 4443 --jump SSLH
-        # ip6tables -t mangle -A SSLH --jump MARK --set-mark 0x1
-        # ip6tables -t mangle -A SSLH --jump ACCEPT
-        # ip -6 rule add fwmark 0x1 lookup 100
-        # ip -6 route add local ::/0 dev lo table 100
+	# Set route_localnet = 1 on all interfaces so that ssl can use "localhost" as destination
+	# Not sure if this is needed for ipv6 though
+	sysctl -w net.ipv4.conf.default.route_localnet=1
+	sysctl -w net.ipv4.conf.all.route_localnet=1
 
-Note that these rules will prevent from connecting directly
-to ssh on the port 22, as packets coming out of sshd will be
-tagged. If you need to retain direct access to ssh on port
-22 as well as through sslh, you can make sshd listen to
-22 AND another port (e.g. 2222), and change the above rules
-accordingly.
+	# DROP martian packets as they would have been if route_localnet was zero
+	# Note: packets not leaving the server aren't affected by this, thus sslh will still work
+	ip6tables -t raw -A PREROUTING ! -i lo -d ::1/128 -j DROP
+	ip6tables -t mangle -A POSTROUTING ! -o lo -s ::1/128 -j DROP
+
+	# Mark all connections made by ssl for special treatment (here sslh is run as user "sslh")
+	ip6tables -t nat -A OUTPUT -m owner --uid-owner sslh -p tcp --tcp-flags FIN,SYN,RST,ACK SYN -j CONNMARK --set-xmark 0x01/0x0f
+
+	# Outgoing packets that should go to sslh instead have to be rerouted, so mark them accordingly (copying over the connection mark)
+	ip6tables -t mangle -A OUTPUT ! -o lo -p tcp -m connmark --mark 0x01/0x0f -j CONNMARK --restore-mark --mask 0x0f
+
+	# Configure routing for those marked packets
+	ip -6 rule add fwmark 0x1 lookup 100
+	ip -6 route add local ::/0 dev lo table 100
+
+Explanation:
+To be able to use `localhost` as destination in your sslh config along with transparent proxying
+you have to allow routing of loopback addresses as done above.
+This is something you usually should not do (see [this stackoverflow post](https://serverfault.com/questions/656279/how-to-force-linux-to-accept-packet-with-loopback-ip/656484#656484))
+The two `DROP` iptables rules emulate the behaviour of `route_localnet` set to off (with one small difference:
+allowing the reroute-check to happen after the fwmark is set on packets destined for sslh).
+See [this diagram](https://upload.wikimedia.org/wikipedia/commons/3/37/Netfilter-packet-flow.svg) for a good visualisation
+showing how packets will traverse the iptables chains.
+
+Note:
+You have to run `sslh` as dedicated user (in this example the user is also named `sslh`), to not mess up with your normal networking.
+These rules will allow you to connect directly to ssh on port
+22 (or to any other service behind sslh) as well as through sslh on port 443.
+
+Also remember that iptables configuration and ip routes and 
+rules won't be necessarily persisted after you reboot. Make 
+sure to save them properly. For example in CentOS7, you would 
+do `iptables-save > /etc/sysconfig/iptables`, and add both 
+`ip` commands to your `/etc/rc.local`.
 
 FreeBSD:
 
@@ -390,32 +425,14 @@ To use the generator place it in /usr/lib/systemd/system-generators and then
 call systemctl daemon-reload after any changes to /etc/sslh.cfg to generate 
 the new dynamic socket unit.
 
-Transparent proxying means the target server sees the real
-origin address, so it means if the client connects using
-IPv6, the server must also support IPv6. It is easy to
-support both IPv4 and IPv6 by configuring the server
-accordingly, and setting `sslh` to connect to a name that
-resolves to both IPv4 and IPv6, e.g.:
-
-        sslh --transparent --listen <extaddr>:443 --ssh insideaddr:22
-
-        /etc/hosts:
-        192.168.0.1  insideaddr
-        201::::2     insideaddr
-
-Upon incoming IPv6 connection, `sslh` will first try to
-connect to the IPv4 address (which will fail), then connect
-to the IPv6 address.
-
-
 Fail2ban
 --------
 
 If using transparent proxying, just use the standard ssh
 rules. If you can't or don't want to use transparent
 proxying, you can set `fail2ban` rules to block repeated ssh
-connections from a same IP address (obviously this depends
-on the site, there might be legimite reasons you would get
+connections from an IP address (obviously this depends
+on the site, there might be legitimate reasons you would get
 many connections to ssh from the same IP address...)
 
 See example files in scripts/fail2ban.
