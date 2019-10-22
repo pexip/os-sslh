@@ -1,7 +1,8 @@
 Source: sslh
 Section: net
 Priority: extra
-Maintainer: Guillaume Delacour <gui@iroqwa.org>
+Maintainer: Pexip AS <packaging@pexip.com>
+XSBC-Pexip-Original-Maintainer: Guillaume Delacour <gui@iroqwa.org>
 Build-Depends: debhelper (>= 9.0.0), libwrap0-dev, binutils, po-debconf,
                libio-socket-inet6-perl, libconfig-dev, libcap-dev [linux-any],
                psmisc, lcov, dh-systemd (>= 1.5)
@@ -9,6 +10,7 @@ Standards-Version: 3.9.8
 Homepage: http://www.rutschle.net/tech/sslh.shtml
 Vcs-Browser: https://anonscm.debian.org/cgit/collab-maint/sslh.git
 Vcs-Git: https://anonscm.debian.org/git/collab-maint/sslh.git
+XS-Pexip-Upstream: http://ftp.debian.org/debian/ stretch
 
 Package: sslh
 Architecture: any

@@ -1,3 +1,9 @@
+sslh (1.18-1pexip1) pexip; urgency=medium
+
+  * Prepare Pexip packaging
+
+ -- Alan Ford <alan@pexip.com>  Tue, 22 Oct 2019 09:56:59 +0000
+
 sslh (1.18-1) unstable; urgency=medium
 
   * New upstream release, include transparent mode local patch from upstream
