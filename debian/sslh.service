@@ -5,7 +5,7 @@ Documentation=man:sslh(8)
 
 [Service]
 EnvironmentFile=/etc/default/sslh
-ExecStart=/usr/sbin/sslh --foreground $DAEMON_OPTS
+ExecStart=/usr/sbin/sslh-select --foreground $DAEMON_OPTS
 KillMode=process
 
 [Install]

@@ -15,7 +15,7 @@ XS-Pexip-Upstream: http://ftp.debian.org/debian/ stretch
 Package: sslh
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}, adduser, debconf (>= 0.5),
-         lsb-base (>= 3.0-6), update-inetd
+         lsb-base (>= 3.0-6)
 Recommends: apache2 | httpd, openssh-server | ssh-server
 Suggests: openbsd-inetd | inet-superserver
 Conflicts: libnet-proxy-perl
