@@ -1,6 +1,7 @@
 sslh (1.18-1pexip1) pexip; urgency=medium
 
   * Prepare Pexip packaging
+  * Remove dependency on inetd and use sslh-select rather than sslh-fork
 
  -- Alan Ford <alan@pexip.com>  Tue, 22 Oct 2019 09:56:59 +0000
 
