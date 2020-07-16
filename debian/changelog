@@ -1,3 +1,9 @@
+sslh (1.18-1pexip2) pexip; urgency=medium
+
+  * Rebuild in buster environment
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Thu, 16 Jul 2020 07:00:04 +0000
+
 sslh (1.18-1pexip1) pexip; urgency=medium
 
   * Prepare Pexip packaging
