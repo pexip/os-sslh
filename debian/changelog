@@ -1,3 +1,9 @@
+sslh (1.18-1pexip4) pexip; urgency=medium
+
+  * Don't enable/start systemd unit file
+
+ -- Huw Jones <huw@pexip.com>  Mon, 31 Jan 2022 14:11:51 +0000
+
 sslh (1.18-1pexip3) pexip; urgency=medium
 
   * Don't enable systemd unit file by default
