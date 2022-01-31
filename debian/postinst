@@ -14,12 +14,7 @@ case "$1" in
             adduser --system --group --quiet --home /nonexistent --no-create-home --disabled-login sslh
         fi
 
-		if command -v invoke-rc.d >/dev/null 2>&1
-		then
-			invoke-rc.d sslh start
-		else
-			/etc/init.d/sslh start
-		fi
+        rm -f /etc/init.d/sslh
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)

@@ -1,3 +1,10 @@
+sslh (1.18-1pexip3) pexip; urgency=medium
+
+  * Don't enable systemd unit file by default
+  * Remove init script
+
+ -- Huw Jones <huw@pexip.com>  Mon, 31 Jan 2022 12:06:54 +0000
+
 sslh (1.18-1pexip2) pexip; urgency=medium
 
   * Rebuild in buster environment

@@ -18,9 +18,13 @@ override_dh_auto_install:
 	# auto install fork version, see debian/install for select version
 	dh_auto_install -- DESTDIR=$(CURDIR)/debian/sslh/usr PREFIX=/ install
 
-# do not start daemon by default: force user to configure
+# disable init install
 override_dh_installinit:
-	dh_installinit --no-start
+	true
+
+# do not enable systemd unit
+override_dh_systemd_enable:
+	dh_systemd_enable --no-enable
 
 %:
 	dh $@ --with systemd
