@@ -3,9 +3,9 @@ Section: net
 Priority: extra
 Maintainer: Pexip AS <packaging@pexip.com>
 XSBC-Pexip-Original-Maintainer: Guillaume Delacour <gui@iroqwa.org>
-Build-Depends: debhelper (>= 9.0.0), libwrap0-dev, binutils, po-debconf,
+Build-Depends: debhelper-compat (= 12), libwrap0-dev, binutils, po-debconf,
                libio-socket-inet6-perl, libconfig-dev, libcap-dev [linux-any],
-               psmisc, lcov, dh-systemd (>= 1.5)
+               psmisc, lcov
 Standards-Version: 3.9.8
 Homepage: http://www.rutschle.net/tech/sslh.shtml
 Vcs-Browser: https://anonscm.debian.org/cgit/collab-maint/sslh.git

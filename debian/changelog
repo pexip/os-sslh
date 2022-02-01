@@ -1,3 +1,11 @@
+sslh (1.18-1pexip5) pexip; urgency=medium
+
+  * Migrate to debhelper 12
+  * Actually don't enable/start systemd unit file
+  * Disable systemd unit when upgrading from old package version
+
+ -- Huw Jones <huw@pexip.com>  Tue, 1 Feb 2022 13:57:38 +0000
+
 sslh (1.18-1pexip4) pexip; urgency=medium
 
   * Don't enable/start systemd unit file
