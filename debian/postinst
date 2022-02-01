@@ -15,6 +15,10 @@ case "$1" in
         fi
 
         rm -f /etc/init.d/sslh
+
+        if dpkg --compare-versions "$2" lt-nl "1.18-1pexip4"; then
+            systemctl disable sslh.service
+        fi
     ;;
 
     abort-upgrade|abort-remove|abort-deconfigure)
