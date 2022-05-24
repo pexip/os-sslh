@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        rm -f /etc/init.d/sslh
+    ;;
+esac
+
+#DEBHELPER#
+
+exit 0

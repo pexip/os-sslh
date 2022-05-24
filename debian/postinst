@@ -14,8 +14,6 @@ case "$1" in
             adduser --system --group --quiet --home /nonexistent --no-create-home --disabled-login sslh
         fi
 
-        rm -f /etc/init.d/sslh
-
         if dpkg --compare-versions "$2" lt-nl "1.18-1pexip4"; then
             systemctl disable sslh.service
         fi
