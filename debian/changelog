@@ -1,3 +1,9 @@
+sslh (1.18-1pexip7) pexip; urgency=medium
+
+  * Make sure the conffile rm is called on upgrades too! :-/
+
+ -- Steve McIntyre <steve.mcintyre@pexip.com>  Thu, 26 May 2022 10:25:24 +0100
+
 sslh (1.18-1pexip6) pexip; urgency=medium
 
   * Move the init script remove to a preinst file, to quieten dpkg

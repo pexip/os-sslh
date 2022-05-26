@@ -2,7 +2,7 @@
 set -e
 
 case "$1" in
-    configure)
+    upgrade|configure)
         rm -f /etc/init.d/sslh
     ;;
 esac
