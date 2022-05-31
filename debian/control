@@ -10,7 +10,7 @@ Standards-Version: 3.9.8
 Homepage: http://www.rutschle.net/tech/sslh.shtml
 Vcs-Browser: https://anonscm.debian.org/cgit/collab-maint/sslh.git
 Vcs-Git: https://anonscm.debian.org/git/collab-maint/sslh.git
-XS-Pexip-Upstream: http://ftp.debian.org/debian/ buster
+XS-Pexip-Upstream: http://deb.debian.org/debian/ bullseye
 
 Package: sslh
 Architecture: any
