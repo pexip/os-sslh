@@ -3,7 +3,7 @@
 VERSION=$(shell ./genver.sh -r)
 ENABLE_REGEX=1  # Enable regex probes
 USELIBCONFIG=1	# Use libconfig? (necessary to use configuration files)
-USELIBPCRE=	# Use libpcre? (needed for regex on musl)
+USELIBPCRE=1	# Use libpcre? (needed for regex on musl)
 USELIBWRAP?=	# Use libwrap?
 USELIBCAP=	# Use libcap?
 USESYSTEMD=     # Make use of systemd socket activation
@@ -27,6 +27,8 @@ CFLAGS ?=-Wall -g $(CFLAGS_COV)
 LIBS=
 OBJS=common.o sslh-main.o probe.o tls.o
 
+CONDITIONAL_TARGETS=
+
 ifneq ($(strip $(USELIBWRAP)),)
 	LIBS:=$(LIBS) -lwrap
 	CPPFLAGS+=-DLIBWRAP
@@ -38,7 +40,7 @@ endif
 
 ifneq ($(strip $(USELIBPCRE)),)
 	CPPFLAGS+=-DLIBPCRE
-	LIBS:=$(LIBS) -lpcre
+	LIBS:=$(LIBS) -lpcreposix
 endif
 
 ifneq ($(strip $(USELIBCONFIG)),)
@@ -54,18 +56,21 @@ endif
 ifneq ($(strip $(USESYSTEMD)),)
         LIBS:=$(LIBS) -lsystemd
         CPPFLAGS+=-DSYSTEMD
+	CONDITIONAL_TARGETS+=systemd-sslh-generator
 endif
 
 
-all: sslh $(MAN) echosrv
+all: sslh $(MAN) echosrv $(CONDITIONAL_TARGETS)
 
-.c.o: *.h
+.c.o: *.h version.h
 	$(CC) $(CFLAGS) $(CPPFLAGS) -c $<
 
 version.h:
 	./genver.sh >version.h
 
 sslh: sslh-fork sslh-select
+
+$(OBJS): version.h
 
 sslh-fork: version.h $(OBJS) sslh-fork.o Makefile common.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -o sslh-fork sslh-fork.o $(OBJS) $(LIBS)
@@ -78,7 +83,7 @@ sslh-select: version.h $(OBJS) sslh-select.o Makefile common.h
 systemd-sslh-generator: systemd-sslh-generator.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o systemd-sslh-generator systemd-sslh-generator.o -lconfig
 
-echosrv: $(OBJS) echosrv.o
+echosrv: version.h $(OBJS) echosrv.o
 	$(CC) $(CFLAGS) $(LDFLAGS) -o echosrv echosrv.o probe.o common.o tls.o $(LIBS)
 
 $(MAN): sslh.pod Makefile

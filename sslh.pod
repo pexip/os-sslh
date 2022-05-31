@@ -6,7 +6,7 @@
 
 =head1 SYNOPSIS
 
-sslh [B<-F> I<config file>] [ B<-t> I<num> ] [B<--transparent>] [B<-p> I<listening address> [B<-p> I<listening address> ...] [B<--ssl> I<target address for SSL>] [B<--ssh> I<target address for SSH>] [B<--openvpn> I<target address for OpenVPN>] [B<--http> I<target address for HTTP>] [B<--anyprot> I<default target address>] [B<--on-timeout> I<protocol name>] [B<-u> I<username>] [B<-P> I<pidfile>] [-v] [-i] [-V] [-f] [-n]
+sslh [B<-F>I<config file>] [B<-t> I<num>] [B<--transparent>] [B<-p> I<listening address> [B<-p> I<listening address> ...] [B<--ssl> I<target address for SSL>] [B<--tls> I<target address for TLS>] [B<--ssh> I<target address for SSH>] [B<--openvpn> I<target address for OpenVPN>] [B<--http> I<target address for HTTP>] [B<--xmpp> I<target address for XMPP>] [B<--tinc> I<target address for TINC>] [B<--anyprot> I<default target address>] [B<--on-timeout> I<protocol name>] [B<-u> I<username>] [B<-C> I<chroot>] [B<-P> I<pidfile>] [-v] [-i] [-V] [-f] [-n]
 
 =head1 DESCRIPTION
 
@@ -58,7 +58,7 @@ expressions, B<sslh> connects to that protocol.
 =head2 Probing protocols
 
 When receiving an incoming connection, B<sslh> will read the
-first bytes sent be the connecting client. It will then
+first bytes sent by the connecting client. It will then
 probe for the protocol in the order specified on the command
 line (or the configuration file). Therefore B<--anyprot>
 should alway be used last, as it always succeeds and further
@@ -78,11 +78,14 @@ connections and LOG_ERR for failures.
 
 =over 4
 
-=item B<-F> I<filename>, B<--config> I<filename>
+=item B<-F>I<filename>, B<--config> I<filename>
 
-Uses I<filename> has configuration file. If other
+Uses I<filename> as configuration file. If other
 command-line options are specified, they will override the
 configuration file's settings.
+
+When using the shorthand version, make sure there should be
+no space between B<-F> and the I<filename>.
 
 =item B<-t> I<num>, B<--timeout> I<num>
 
@@ -92,7 +95,11 @@ protocol (which should usually be SSH). Default is 2s.
 =item B<--on-timeout> I<protocol name>
 
 Name of the protocol to connect to after the timeout period
-is over. Default is 'ssh'.
+is over. Default is to forward to the first specified
+protocol. It usually makes sense to specify 'ssh' as the
+timeout protocol, as the SSH specification does not tell
+who is supposed to speak first and a large number of SSH
+clients wait for the server to send its banner.
 
 =item B<--transparent>
 
@@ -123,7 +130,7 @@ inside your network to just connect directly to B<httpd>.
 
 Also, B<sslh> probes for SSLv3 (or TLSv1) handshake and will
 reject connections from clients requesting SSLv2. This is
-compliant to RFC6176 which prohibits the usage of SSLv2. If
+compliant with RFC6176 which prohibits the usage of SSLv2. If
 you wish to accept SSLv2, use B<--default> instead.
 
 =item B<--ssh> I<target address>
@@ -181,6 +188,10 @@ Prints B<sslh> version.
 
 Requires to run under the specified username. 
 
+=item B<-C> I<chroot>, B<--chroot> I<chroot>
+
+Requires to run under the specified chroot.
+
 =item B<-P> I<pidfile>, B<--pidfile> I<pidfile>
 
 Specifies a file in which to write the PID of the main
@@ -226,10 +237,10 @@ detailed explanation of the variables used by B<sslh>.
 
 =head1 SEE ALSO
 
-Last version available from
+The latest version is available from
 L<http://www.rutschle.net/tech/sslh>, and can be tracked
 from L<http://freecode.com/projects/sslh>.
 
 =head1 AUTHOR
 
-Written by Yves Rutschle
+Written by Yves Rutschle.

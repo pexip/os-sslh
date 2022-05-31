@@ -94,6 +94,8 @@ void start_shoveler(int in_socket)
        } else {
            /* Timed out: it's necessarily SSH */
            cnx.proto = timeout_protocol();
+           if (verbose) 
+               log_message(LOG_INFO, "timed out, connect to %s\n", cnx.proto->description);
            break;
        }
    }
@@ -143,11 +145,17 @@ void main_loop(int listen_sockets[], int num_addr_listen)
 
     listener_pid_number = num_addr_listen;
     listener_pid = malloc(listener_pid_number * sizeof(listener_pid[0]));
+    CHECK_ALLOC(listener_pid, "malloc");
 
     /* Start one process for each listening address */
     for (i = 0; i < num_addr_listen; i++) {
-        if (!(listener_pid[i] = fork())) {
-
+        listener_pid[i] = fork();
+        switch(listener_pid[i]) {
+        // Log if fork() fails for some reason
+        case -1: log_message(LOG_ERR, "fork failed: err %d: %s\n", errno, strerror(errno));
+                 break;
+        // We're in the child, we have work to do 
+        case 0:
             /* Listening process just accepts a connection, forks, and goes
              * back to listening */
             while (1)
@@ -155,15 +163,26 @@ void main_loop(int listen_sockets[], int num_addr_listen)
                 in_socket = accept(listen_sockets[i], 0, 0);
                 if (verbose) fprintf(stderr, "accepted fd %d\n", in_socket);
 
-                if (!fork())
-                {
+                switch(fork()) {
+                case -1: log_message(LOG_ERR, "fork failed: err %d: %s\n", errno, strerror(errno));
+                         break;
+
+                /* In child process */
+                case 0:
                     for (i = 0; i < num_addr_listen; ++i)
                         close(listen_sockets[i]);
                     start_shoveler(in_socket);
                     exit(0);
+
+                /* In parent process */
+                default: break;
                 }
                 close(in_socket);
             }
+	    break;
+	// We're in the parent, we don't need to do anything
+	default:
+	    break;
         }
     }
 
