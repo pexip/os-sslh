@@ -27,4 +27,4 @@ override_dh_installsystemd:
 	dh_installsystemd --no-enable --no-start
 
 %:
-	dh $@ --no-parallel
+	dh $@

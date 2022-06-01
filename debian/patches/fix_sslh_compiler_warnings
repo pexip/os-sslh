@@ -1,0 +1,14 @@
+Description: Silence compiler warnings because ssl_err_msg isn't a format string
+Author: Don Armstrong <don@debian.org>
+Forwarded: no
+--- a/sslh-main.c
++++ b/sslh-main.c
+@@ -167,7 +167,7 @@
+             strcpy(argv[i], "--tls");
+             /* foreground option not parsed yet, syslog not open, just print on
+              * stderr and hope for the best */
+-            fprintf(stderr, ssl_err_msg);
++            fprintf(stderr, "%s",ssl_err_msg);
+         }
+     }
+ }

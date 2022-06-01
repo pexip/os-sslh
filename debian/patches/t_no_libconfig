@@ -1,0 +1,138 @@
+--- a/t
++++ b/t
+@@ -10,11 +10,10 @@
+ use IO::Socket::INET6;
+ use IO::Socket::INET;
+ use Test::More qw/no_plan/;
+-use Conf::Libconfig;
+-
+-my $conf = new Conf::Libconfig;
+-$conf->read_file("test.cfg");
+-
++use File::Temp qw(tempdir);
++# Because nothing else in Debian uses Conf::Libconfig, and I
++# (don@debian.org) don't want to package it, we have hard coded
++# test.cfg
+ 
+ sub get_unused_port {
+     my $sock = IO::Socket::INET->new(
+@@ -26,8 +25,26 @@
+     $sock->shutdown(2);
+     return $port;
+ }
++
++my $conf =
++   {protocols =>
++     [{ name => "ssh",  host => "localhost", fork => 1},
++     { name => "socks5",  host => "localhost",  },
++     { name => "http",  host => "localhost", ,  },
++     { name => "tinc",  host => "localhost", , },
++     { name => "openvpn",  host => "localhost",, },
++     { name => "xmpp",  host => "localhost", },
++     { name => "adb",  host => "localhost",, },
++     { name => "tls", host => "localhost", , alpn_protocols => [ "alpn1", "alpn2" ], sni_hostnames => [ "sni1" ], },
++     { name => "ssl", host => "localhost", alpn_protocols => [ "alpn1", "alpn2" ], sni_hostnames => [ "sni2", "sni3" ], },
++     { name => "tls", host => "localhost", alpn_protocols => [ "alpn3" ], },
++     { name => "tls", host => "localhost", sni_hostnames => [ "sni3" ], },
++     { name => "ssl", host => "localhost", },
++     { name => "anyprot",  host => "localhost", }],
++   };
++
+ my $no_listen = get_unused_port();  # Port on which no-one listens
+-my $pidfile = $conf->lookup_value("pidfile");
++my $pidfile = tempdir(CLEANUP=>1).'/sslh.pid';
+ my $sslh_port = get_unused_port();
+ my $user = (getpwuid $<)[0]; # Run under current username
+ 
+@@ -117,7 +134,7 @@
+ sub test_probes {
+     my (%opts) = @_;
+ 
+-    my @probes = @{$conf->fetch_array("protocols")};
++    my @probes = @{$conf->{"protocols"}};
+     foreach my $p (@probes) {
+         my %protocols = (
+             'ssh' => { data => "SSH-2.0 tester" },
+@@ -185,11 +202,13 @@
+ 
+ 
+ # Start an echoserver for each service
+-foreach my $s (@{$conf->fetch_array("protocols")}) {
++foreach my $s (@{$conf->{"protocols"}}) {
+     my $prefix = $s->{name};
+ 
+     $prefix =~ s/^ssl/tls/; # To remove in 1.21
+ 
++    $s->{port} = get_unused_port();
++
+     if ($s->{sni_hostnames} or $s->{alpn_protocols}) {
+         $prefix = make_sni_alpn_name($s);
+     }
+@@ -197,6 +216,53 @@
+     verbose_exec "./echosrv --listen $s->{host}:$s->{port} --prefix '$prefix: '";
+ }
+ 
++# Write out test.cfg with new unused ports
++open(my $test_cfg,'>test.cfg') or
++    die "Unable to open test.cfg for writing";
++print {$test_cfg} <<"EOF";
++# Configuration file for testing (use both by sslh under
++# test and the test script `t`)
++
++verbose: 2;
++foreground: true;
++inetd: false;
++numeric: false;
++transparent: false;
++timeout: 10;   # Probe test writes slowly
++pidfile: "$pidfile";
++
++syslog_facility: "auth";
++
++
++# List of interfaces on which we should listen
++# Options:
++listen:
++(
++    { host: "localhost"; port: "$sslh_port"; keepalive: true; },
++    { host: "localhost"; port: "8081"; keepalive: true; }
++);
++
++
++protocols:
++(
++     { name: "ssh";  host: "localhost"; port: "$conf->{protocols}[0]{port}"; fork: true; },
++     { name: "socks5";  host: "localhost"; port: "$conf->{protocols}[1]{port}";  },
++     { name: "http";  host: "localhost"; port: "$conf->{protocols}[2]{port}";  },
++     { name: "tinc";  host: "localhost"; port: "$conf->{protocols}[3]{port}"; },
++     { name: "openvpn";  host: "localhost"; port: "$conf->{protocols}[4]{port}"; },
++     { name: "xmpp";  host: "localhost"; port: "$conf->{protocols}[5]{port}"; },
++     { name: "adb";  host: "localhost"; port: "$conf->{protocols}[6]{port}"; },
++     { name: "tls"; host: "localhost"; port: "$conf->{protocols}[7]{port}"; alpn_protocols: [ "alpn1", "alpn2" ]; sni_hostnames: [ "sni1" ]; },
++     { name: "ssl"; host: "localhost"; port: "$conf->{protocols}[8]{port}"; alpn_protocols: [ "alpn1", "alpn2" ]; sni_hostnames: [ "sni2", "sni3" ]; },
++     { name: "tls"; host: "localhost"; port: "$conf->{protocols}[9]{port}"; alpn_protocols: [ "alpn3" ]; },
++     { name: "tls"; host: "localhost"; port: "$conf->{protocols}[10]{port}"; sni_hostnames: [ "sni3" ]; },
++     { name: "ssl"; host: "localhost"; port: "$conf->{protocols}[11]{port}"; },
++     { name: "anyprot";  host: "localhost"; port: "$conf->{protocols}[12]{port}";  }
++);
++
++on-timeout: "ssh";
++EOF
++close ($test_cfg);
+ 
+ my @binaries = ('sslh-select', 'sslh-fork');
+ for my $binary (@binaries) {
+@@ -314,11 +380,11 @@
+ }
+ 
+ 
+-my $ssh_conf = (grep { $_->{name} eq "ssh" } @{$conf->fetch_array("protocols")})[0];
++my $ssh_conf = (grep { $_->{name} eq "ssh" } @{$conf->{"protocols"}})[0];
+ my $ssh_address = $ssh_conf->{host} . ":" .  $ssh_conf->{port};
+ 
+ # Use the last TLS echoserv (no SNI/ALPN)
+-my $ssl_conf = (grep { $_->{name} eq "tls" } @{$conf->fetch_array("protocols")})[-1];
++my $ssl_conf = (grep { $_->{name} eq "tls" } @{$conf->{"protocols"}})[-1];
+ my $ssl_address = $ssl_conf->{host} . ":" .  $ssl_conf->{port};
+ 
+ 

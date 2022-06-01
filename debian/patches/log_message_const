@@ -1,0 +1,25 @@
+Description: log_message should be const char*, not just char*
+Author: Don Armstrong <don@debian.org>
+Forwarded: no
+--- a/common.c
++++ b/common.c
+@@ -538,7 +538,7 @@
+ }
+ 
+ /* Log to syslog or stderr if foreground */
+-void log_message(int type, char* msg, ...)
++void log_message(int type, const char* msg, ...)
+ {
+     va_list ap;
+ 
+--- a/common.h
++++ b/common.h
+@@ -112,7 +112,7 @@
+ void setup_syslog(const char* bin_name);
+ void drop_privileges(const char* user_name, const char* chroot_path);
+ void write_pid_file(const char* pidfile);
+-void log_message(int type, char* msg, ...);
++void log_message(int type, const char* msg, ...);
+ void dump_connection(struct connection *cnx);
+ int resolve_split_name(struct addrinfo **out, const char* hostname, const char* port);
+ 

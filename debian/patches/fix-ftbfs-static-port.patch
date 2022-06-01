@@ -1,0 +1,32 @@
+--- a/t
++++ b/t
+@@ -8,6 +8,7 @@
+ 
+ use strict;
+ use IO::Socket::INET6;
++use IO::Socket::INET;
+ use Test::More qw/no_plan/;
+ use Conf::Libconfig;
+ 
+@@ -15,9 +16,19 @@
+ $conf->read_file("test.cfg");
+ 
+ 
+-my $no_listen = 8083;  # Port on which no-one listens
++sub get_unused_port {
++    my $sock = IO::Socket::INET->new(
++        Listen => 1,
++        LocalAddr => 'localhost',
++        ReuseAddr => 1,
++    );
++    my $port = $sock->sockport();
++    $sock->shutdown(2);
++    return $port;
++}
++my $no_listen = get_unused_port();  # Port on which no-one listens
+ my $pidfile = $conf->lookup_value("pidfile");
+-my $sslh_port = $conf->fetch_array("listen")->[0]->{port};
++my $sslh_port = get_unused_port();
+ my $user = (getpwuid $<)[0]; # Run under current username
+ 
+ # Which tests do we run
