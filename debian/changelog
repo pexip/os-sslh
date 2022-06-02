@@ -1,3 +1,9 @@
+sslh (1.20-1pexip1) pexip; urgency=medium
+
+  * Initial bullseye build
+
+ -- Mark Hymers <mark.hymers@pexip.com>  Thu, 02 Jun 2022 14:42:58 +0100
+
 sslh (1.20-1) unstable; urgency=medium
 
   [ Guillaume Delacour ]
